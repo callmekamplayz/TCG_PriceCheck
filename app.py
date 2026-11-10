@@ -60,8 +60,8 @@ def decode(upload):
     return value.strip() if value else ""
 
 def target(cid):
-    root=os.getenv("TCG_APP_URL","").rstrip("/")
-    return f"{root}/?listing={cid}" if root else f"?listing={cid}"
+    root = "https://tcg-pricecheck.streamlit.app"
+    return f"{root}/?listing={cid}"
 
 def ebay_url(card):
     q=" ".join(x for x in [card["name"],card["set_name"],card["number"],card["language"],card["condition"]] if x)
