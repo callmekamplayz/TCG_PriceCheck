@@ -11,6 +11,7 @@ import numpy as np
 import requests
 import pandas as pd
 import altair as alt
+from free_history import GAMES, find_printings, fetch_prices
 
 DB="tcg_pricecheck.db"
 st.set_page_config(page_title="TCG PriceCheck", page_icon="🃏", layout="wide")
@@ -18,18 +19,18 @@ st.set_page_config(page_title="TCG PriceCheck", page_icon="🃏", layout="wide")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-.stApp{background:radial-gradient(ellipse at 15% 0%,#252d68 0%,#111831 48%,#090d1d 100%);color:#f5f6ff}
+.stApp{background:radial-gradient(ellipse at 15% 0%,#291446 0%,#14101f 45%,#09080f 100%);color:#f5f6ff}
 html,body,[class*="css"]{font-family:Inter,sans-serif}
 .block-container{max-width:1150px;padding-top:1.5rem}
 [data-testid="stHeader"]{background:transparent}
-.hero{background:linear-gradient(120deg,#342c75aa,#18234fbb);border:1px solid #716bd055;border-radius:24px;padding:25px 28px;margin-bottom:20px}
+.hero{background:linear-gradient(120deg,#3f1c66aa,#1c122bbb);border:1px solid #716bd055;border-radius:24px;padding:25px 28px;margin-bottom:20px}
 .brand{font-size:2.2rem;font-weight:800;letter-spacing:-1px}.brand span{color:#ad9cff}
 .tagline,.muted{color:#bfc7e8}
-.panel{background:#151d3bea;border:1px solid #7e89c044;border-radius:20px;padding:20px;margin:10px 0;box-shadow:0 12px 35px #0003}
+.panel{background:#181122ee;border:1px solid #7e89c044;border-radius:20px;padding:20px;margin:10px 0;box-shadow:0 12px 35px #0003}
 .metric{background:linear-gradient(135deg,#5744a955,#292d65);border:1px solid #9b8aff55;border-radius:16px;padding:18px}
 .metric-label{color:#c3c8e5;font-size:.85rem}.metric-value{font-size:2.1rem;font-weight:800;color:white}
-div.stButton>button,div.stDownloadButton>button{background:linear-gradient(110deg,#795cff,#5945db);color:white;border:0;border-radius:12px;font-weight:700;min-height:2.8rem;width:100%}
-.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"]{background:#111831!important;color:#fff!important;border-radius:10px}
+div.stButton>button,div.stDownloadButton>button{background:linear-gradient(110deg,#9333ea,#6d28d9);color:white;border:0;border-radius:12px;font-weight:700;min-height:2.8rem;width:100%}
+.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"]{background:#170e22!important;color:#fff!important;border-radius:10px}
 [data-testid="stTabs"] button{color:#cbd0ed;font-weight:700}
 [data-testid="stTabs"] button[aria-selected="true"]{color:#b5a7ff}
 hr{border-color:#8d97c033}
@@ -486,7 +487,10 @@ def render_history(frame, currency, source_label, period):
                  alt.Tooltip("price:Q", title=f"Price ({currency})", format=",.2f")],
     )
     # Keep genuine single-day points visible without creating fictitious trends.
-    chart = base.mark_line(interpolate="linear").properties(height=320) + base.mark_circle(size=80)
+    chart = base.mark_line(interpolate="linear", strokeWidth=3).properties(height=320) + base.mark_circle(size=38)
+    chart = chart.configure_view(stroke=None, fill="#100e1c").configure_axis(
+        labelColor="#e4d7ff", titleColor="#c4adff", gridColor="#33274e", domainColor="#7053ae"
+    ).configure_legend(labelColor="#e4d7ff", titleColor="#c4adff")
     st.altair_chart(chart.interactive(), use_container_width=True)
     if currency != "USD":
         st.caption("Converted using historical daily exchange rates (Frankfurter). Weekend and holiday observations use the preceding available rate. The original USD market price remains the source.")
@@ -552,6 +556,74 @@ def snapshot_data(catalog_id):
         c.close()
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def free_source_candidates(game, name, set_name, number):
+    return find_printings(name, set_name, number, game)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def free_source_history(pid):
+    return fetch_prices(pid)
+
+
+def render_free_provider(game, name, set_name, number, catalog_id, slot, currency, period, imported_frame):
+    """Use free TickerMint history only after verifying matching name, set and number.
+
+    Its free, no-key access currently covers only ~30 days. No daily points or
+    sales-volume bars are fabricated when the provider cannot supply them.
+    """
+    try:
+        hits = free_source_candidates(game, name, set_name, number)
+    except requests.RequestException as exc:
+        st.warning("Free TickerMint prices could not be retrieved right now. "
+                   "The service may be rate-limiting requests or temporarily unavailable.")
+        return False
+    if not hits:
+        st.info("TickerMint did not return a verified match for this card's name, set AND number. "
+                "No unrelated printing will be used. The current-price source is shown below instead.")
+        return False
+    # Multiple edition/finish products may exist. Never automatically choose a random one.
+    choices = {str(hit["product_id"]): hit for hit in hits}
+    if len(choices) == 1:
+        chosen = next(iter(choices.values()))
+    else:
+        key = "ticker_choice_" + re.sub(r"[^A-Za-z0-9_-]", "_", f"{slot}_{catalog_id}")
+        product_id = st.selectbox("Select the exact edition / finish for historical prices",
+                                  [""] + list(choices),
+                                  format_func=lambda value: "Choose a printing…" if not value else
+                                  f"{choices[value].get('name')} · {choices[value].get('set_name')} "
+                                  f"#{choices[value].get('card_number')} · {choices[value].get('printing', '')}",
+                                  key=key)
+        if not product_id:
+            st.info("Select a specific TickerMint printing to view its price history.")
+            return True
+        chosen = choices[product_id]
+    pid = chosen["product_id"]
+    st.caption("Verified provider match: " + str(chosen.get("name", name)) + " · " +
+               str(chosen.get("set_name", set_name)) + " #" + str(chosen.get("card_number", number)) +
+               " · " + str(chosen.get("printing", "")))
+    url = chosen.get("tickermint_url") or f"https://tickermint.cards/card/{pid}"
+    st.link_button("Prices: TickerMint · Source card", url)
+    st.caption("Free, non-commercial use. No key: about 30 days of history; "
+               "1M/3M/6M/1Y controls cannot add missing older dates. "
+               "Sales volume isn't available in this endpoint.")
+    try:
+        frame = free_source_history(pid)
+    except (requests.RequestException, ValueError) as exc:
+        st.warning("Historical pricing unavailable from TickerMint right now; "
+                   "please check the provider link. Your current market quote may still be available.")
+        return True
+    if imported_frame is not None:
+        render_history(imported_frame, currency, "Uploaded observations (not independently verified)", period)
+    elif frame.empty:
+        st.info("No dated historical prices returned for this exact printing.")
+    else:
+        last = frame.sort_values("date").iloc[-1]
+        st.markdown(f"**Latest available TickerMint market price:** ${last['price']:,.2f} USD ({last['finish']})")
+        render_history(frame, currency, "TCGplayer market history via TickerMint", period)
+    return True
+
+
 def price_panel(catalog_id, game, name, set_name, number, slot="selected"):
     st.caption(f"Exact printing: {name} · {set_name} · #{number}")
     search = quote_plus(" ".join(filter(None, [name, set_name, str(number)])))
@@ -561,6 +633,12 @@ def price_panel(catalog_id, game, name, set_name, number, slot="selected"):
     try:
         currency, period = price_history_chart(catalog_id, slot)
         imported_frame = uploaded_history_panel(catalog_id, slot)
+        if game in GAMES:
+            # The no-key TickerMint source supplies real pre-existing prices,
+            # unlike a single-day snapshot collected by this app.
+            if render_free_provider(game, name, set_name, number, catalog_id,
+                                    slot, currency, period, imported_frame):
+                return
         if game == "Riftbound" and catalog_id.startswith("riftbound:"):
             live_prices, live_link = riftbound_market(catalog_id)
             if live_prices:
@@ -601,7 +679,7 @@ def price_panel(catalog_id, game, name, set_name, number, slot="selected"):
             st.info("No market price available through the free catalogue API for this exact printing. Try the marketplace link.")
             if imported_frame is not None:
                 render_history(imported_frame, currency, "Uploaded observations (not independently verified)", period)
-        st.caption("For other games, recorded points come from prices observed while this app is open, not historical TCGplayer data. Yu-Gi-Oh! card-wide quotes are not set-specific. Locally stored snapshots may be lost when Streamlit Cloud restarts.")
+        st.caption("Fallback prices for Magic and unavailable catalogue matches are observations collected while using the app, NOT historic TCGplayer data. These local snapshots may be lost when Streamlit Cloud restarts.")
         st.link_button("View exact printing on TCGplayer" if purchase else "Search TCGplayer for this card",
                        purchase or tcg_search_url)
     except (requests.RequestException, ValueError, KeyError, TypeError, pd.errors.ParserError) as exc:

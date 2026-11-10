@@ -1,24 +1,29 @@
-# TCG PriceCheck — single interactive price chart
+# TCG PriceCheck — Free Historical Price Charts
 
-## What's changed
+This edition keeps the card search, QR generation, listings, and black/purple Streamlit theme. Its new **free_history.py** module integrates TickerMint's *no-key*, free-for-non-commercial-use historical TCGplayer market prices for **Pokémon, Yu-Gi-Oh! and Riftbound**.
 
-- **One chart per selected card**, instead of separate TCGplayer and Cardmarket plots.
-- **Currency picker:** GBP (£), USD ($), EUR (€). The underlying data retains its original currency. Conversions use actual daily historical exchange rates from Frankfurter, including previous business-day rates for weekends/holidays; if unavailable, the app says so rather than guessing.
-- **Range buttons:** 1M, 3M, 6M, 1Y. Riftbound's data is requested from RiftHunt for the selected range; locally observed price snapshots are filtered by the selected range.
-- Normal/foil remain separate **lines within the same chart**; an interactive legend and tooltips help comparison.
-- **Honest missing-history handling:** One observed date is shown as a point with an explanation. No artificial prices or drawn trend lines are generated for dates without data.
-- Chart controls have distinct keys when different listings are visible simultaneously.
+## What the free integration can and cannot do
 
-## Important limitations
+- **Pokémon / Yu-Gi-Oh! / Riftbound:** Searches TickerMint by card name and number, then strictly checks the card **name, set and collector number**. If multiple printings match, the user chooses the edition / finish. Real dated market prices are displayed with the existing GBP / USD / EUR and 1M / 3M / 6M / 1Y controls. An explicit `Prices: TickerMint` link credits the provider.
+- **No API key:** TickerMint currently documents **approximately 30 days** of data (and a per-IP request limit), not full 1Y history. The range buttons do not create missing prices. Cached lookups help conserve the free quota. The provider's terms restrict free access to non-commercial/personal uses.
+- **Riftbound fallback:** If no verified TickerMint match exists, the prior RiftHunt market/history code still runs; RiftHunt's history starts 9 Nov 2026.
+- **Magic: The Gathering:** Current Scryfall prices and locally tracked snapshots are retained. MTGJSON offers up to 90 days of genuine price data, but the public AllPrices download is tens/hundreds of megabytes and is impractical to fetch on every Streamlit interaction; it has **not** been connected. A preprocessed/cache-backed MTGJSON integration would be separate work.
+- **Sales bars:** No sales-volume bars are displayed because these APIs don't provide a comparable daily sold-count series for the selected printing. Invented data is never used.
+- **Currencies:** Historical prices are in USD. The existing historical Frankfurter conversion is applied for GBP/EUR when available. If the FX service is down, choose USD.
+- **Online storage:** Local SQLite listings are **not durable on Streamlit Community Cloud** after redeployment or restart.
 
-RiftHunt's Riftbound historical TCGplayer data begins **9 November 2026**, so a 1Y setting will *not* produce a year's chart. Other games have only app-recorded observation dates, **not** a TCGplayer 1-year history. These snapshots are saved in local SQLite; on Streamlit Community Cloud, they can disappear on restart. A hosted database and authorised historical pricing data source would be needed for persistent historical charts covering all games.
+## How to update your existing GitHub website
 
-Historical currency conversion changes the displayed currency, not the marketplace or price source. Cardmarket EUR prices are not combined with TCGplayer USD prices.
+1. Extract this ZIP.
+2. Upload **app.py**, **free_history.py** and **requirements.txt** to the **root** of your existing TCG_PriceCheck repository; replace the existing app.py and requirements.txt. **Do not delete the repository.**
+3. Commit changes. Streamlit Community Cloud will deploy the modified app.
+4. Open https://tcg-pricecheck.streamlit.app/, choose a card, and expand the price history panel.
+5. Try a specific printing such as **M Gengar EX — Phantom Forces #35**. Choose a TickerMint product if several printings match.
 
-## Deploy to your existing site
+The free TickerMint endpoint can enforce a per-IP quota; users of a public Streamlit deployment may share an IP and encounter rate limiting. If the provider is unavailable, the existing current-price sources remain usable.
 
-1. Download/extract the package.
-2. Replace `app.py` and `requirements.txt` in the root of your **existing** GitHub repository (no need to delete it).
-3. Commit, then reopen https://tcg-pricecheck.streamlit.app/ after Streamlit redeploys.
+### Testing
 
-Requires Streamlit 1.45+ for segmented range controls. Live provider requests need to be verified on your deployed site; Python syntax and chart-record parsing were checked locally.
+Locally verified: `python -m py_compile app.py free_history.py`; offline mocked HTTP searches, exact-printing checks, rejection of wrong sets/numbers, market history response parsing, and date/period logic. **Live TickerMint or Streamlit deployment was not testable in this environment**; the documented endpoints and response formats were used. Be cautious if the external API changes.
+
+References: https://tickermint.cards/developers/python and https://tickermint.cards/developers; https://rifthunt.com/api/; https://www.mtgjson.com/downloads/all-files/
